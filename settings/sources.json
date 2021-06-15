@@ -1,0 +1,22 @@
+{
+	"sources": {
+		"mongo_example": {
+			"disabled": false,
+			"uri": "mongodb://nex:1qazWWSX@mongodb-0.mongodb.converg-ot.svc.cluster.local:27017/?authSource=admin&replicaSet=rs0test&readPreference=primary&appname=testCDC&ssl=false",
+			"ca_file": "",
+			"dbname": "gravity",
+			"initialLoad": false,
+			"tables": {
+				"gravity":{
+					"events": {
+						"//comment": "no support snapshot event, initialLoad events are in create / update /delete",
+						"//snapshot": "accountInitialzed",
+						"create": "accountCreated",
+						"update": "accountUpdated",
+						"delete": "accountDeleted"
+					}
+				}
+			}
+		}
+	}
+}
