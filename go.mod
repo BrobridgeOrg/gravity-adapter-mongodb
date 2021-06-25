@@ -3,7 +3,7 @@ module git.brobridge.com/gravity/gravity-adapter-mongodb
 go 1.15
 
 require (
-	github.com/BrobridgeOrg/broton v0.0.6
+	github.com/BrobridgeOrg/broton v0.0.7
 	github.com/BrobridgeOrg/gravity-sdk v0.0.19
 	github.com/cfsghost/parallel-chunked-flow v0.0.6
 	github.com/json-iterator/go v1.1.10

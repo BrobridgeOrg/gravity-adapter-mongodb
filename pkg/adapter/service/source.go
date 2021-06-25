@@ -151,18 +151,20 @@ func (source *Source) Init() error {
 
 		source.store = store
 
-		var resumeToken string = ""
+		// Register Columns
+		columns := []string{"status"}
+		err = source.store.RegisterColumns(columns)
+		if err != nil {
+			log.Error(err)
+			return err
+		}
 
 		// Getting resumeToken
+		var resumeToken string = ""
 		resumeToken, err = source.store.GetString("status", []byte("RESUME_TOKEN"))
 		if err != nil {
-			log.Error(err, " register column and continue ...")
-			columns := []string{"status"}
-			err := source.store.RegisterColumns(columns)
-			if err != nil {
-				log.Error(err)
-				return err
-			}
+			log.Error(err)
+			return err
 		}
 
 		source.database.resumeToken = resumeToken
