@@ -7,8 +7,8 @@ maxPingsOutstanding = 3
 maxReconnects = -1
 
 [adapter]
-adapter_id = "mongodb_adapter"
-adapter_name = "Mongodb Adapter"
+adapterID = "mongodb_adapter"
+adapterName = "Mongodb Adapter"
 
 [source]
 config = "./settings/sources.json"
