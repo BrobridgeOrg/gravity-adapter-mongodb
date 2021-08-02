@@ -10,6 +10,10 @@ maxReconnects = -1
 adapterID = "mongodb_adapter"
 adapterName = "Mongodb Adapter"
 
+# Authentication
+appID = "anonymous"
+accessKey = ""
+
 [source]
 config = "./settings/sources.json"
 
