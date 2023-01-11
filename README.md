@@ -1,6 +1,6 @@
-# gravity-adapter-mysql
+# gravity-adapter-mongodb
 
-Gravity adapter for MySQL
+Gravity adapter for MongoDB
 
 ---
 
