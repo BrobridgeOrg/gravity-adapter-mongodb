@@ -15,6 +15,7 @@ port = 4222
 pingInterval = 10
 maxPingsOutstanding = 3
 maxReconnects = -1
+accessToken = ""
 
 [adapter]
 adapterID = "mongodb_adapter"
@@ -239,5 +240,5 @@ Licensed under the MIT License
 
 ## Authors
 Copyright(c) 2024 Fred Chien <<fred@brobridge.com>>  
-Copyright(c) 2024 Jhe Sue <<jhe@brobridge.com>>
+Copyright(c) 2024 Jhe Sue <<jhe@brobridge.com>>  
 Copyright(c) 2024 Jose Wang <<jose@brobridge.com>>
