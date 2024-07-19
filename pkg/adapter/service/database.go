@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io/ioutil"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -23,6 +24,7 @@ type Database struct {
 	dbInfo      *DatabaseInfo
 	db          *mongo.Database
 	resumeToken string
+	stopping    bool
 }
 
 func NewDatabase() *Database {
@@ -67,18 +69,29 @@ func (database *Database) Connect(info *SourceInfo) error {
 	// Set client options
 	clientOptions := options.Client().ApplyURI(info.Uri)
 
+	// Set auth
+	if len(info.Username) > 0 && len(info.Password) > 0 {
+		clientOptions.SetAuth(options.Credential{
+			Username:   info.Username,
+			Password:   info.Password,
+			AuthSource: info.AuthSource,
+		})
+	}
+
 	// Load CA file
 	if len(info.CAFile) > 0 {
 		tlsConfig, err := database.LoadCert(info.CAFile)
 		if err != nil {
-			log.Error(err)
+			//log.Error(err)
 			return err
 		}
 		clientOptions.SetTLSConfig(tlsConfig)
 	}
 
 	// Connect to MongoDB
-	client, err := mongo.Connect(context.Background(), clientOptions)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
 		return err
 	}
@@ -86,7 +99,7 @@ func (database *Database) Connect(info *SourceInfo) error {
 	database.db = client.Database(info.DBName)
 
 	// Check the connection
-	err = client.Ping(context.TODO(), nil)
+	err = client.Ping(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -100,56 +113,72 @@ func (database *Database) GetConnection() *mongo.Database {
 	return database.db
 }
 
-func (database *Database) StartCDC(tables []string, initialLoad bool, fn func(*CDCEvent)) error {
+func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bool, fn func(*CDCEvent)) error {
 
 	db := database.GetConnection()
 
-	for {
+	var wg sync.WaitGroup
 
-		log.Info("Start Watch Event.")
+	for tableName := range tables {
+		wg.Add(1)
+		go func(tableName string) {
+			defer wg.Done()
 
-		matchStage := bson.D{}
-		opts := options.ChangeStream().SetMaxAwaitTime(2 * time.Second)
-		if initialLoad && database.resumeToken == "" {
-			// InitialLoad
-			opts.SetStartAtOperationTime(&primitive.Timestamp{
-				T: 0,
-			})
-		} else if database.resumeToken != "" {
+			for {
+				log.WithFields(log.Fields{
+					"Table": tableName,
+				}).Info("Start Watch Event.")
 
-			rt := bson.Raw{}
-			bson.Unmarshal([]byte(database.resumeToken), &rt)
-			opts.SetResumeAfter(rt)
-		}
+				matchStage := bson.D{}
+				opts := options.ChangeStream().SetMaxAwaitTime(2 * time.Second)
+				if initialLoad && database.resumeToken == "" {
+					// InitialLoad
+					opts.SetStartAtOperationTime(&primitive.Timestamp{
+						T: 0,
+					})
+				} else if database.resumeToken != "" {
+					rt := bson.Raw{}
+					bson.Unmarshal([]byte(database.resumeToken), &rt)
+					opts.SetResumeAfter(rt)
+				}
 
-		changeStream, err := db.Watch(context.TODO(), matchStage, opts)
-		if err != nil {
-			<-time.After(1 * time.Second)
-			log.Error(err)
-			continue
-		}
+				changeStream, err := db.Collection(tableName).Watch(context.TODO(), matchStage, opts)
+				if err != nil {
+					log.WithFields(log.Fields{
+						"Table": tableName,
+					}).Error(err)
+					return
+				}
 
-		for changeStream.Next(context.TODO()) {
-			event := make(map[string]interface{}, 0)
-			changeStream.Decode(event)
-			resumeToken := changeStream.ResumeToken()
-			database.resumeToken = string(resumeToken)
+				defer changeStream.Close(context.TODO())
 
-			// parsing event
-			cdcEvent, err := database.processEvent(event)
-			if err != nil {
-				log.Error(err)
-				continue
+				for changeStream.Next(context.TODO()) {
+					event := make(map[string]interface{}, 0)
+					changeStream.Decode(event)
+					resumeToken := changeStream.ResumeToken()
+					database.resumeToken = string(resumeToken)
+
+					// parsing event
+					cdcEvent, err := database.processEvent(event)
+					if err != nil {
+						log.WithFields(log.Fields{
+							"Table": tableName,
+						}).Error(err)
+						continue
+					}
+
+					// add resumeToken to cdcEvent
+					cdcEvent.ResumeToken = database.resumeToken
+					//log.Info("resumeToken: ", database.resumeToken)
+
+					// Send event
+					fn(cdcEvent)
+				}
 			}
-
-			// add resumeToken to cdcEvent
-			cdcEvent.ResumeToken = database.resumeToken
-			//log.Info("resumeToken: ", database.resumeToken)
-
-			// Send event
-			fn(cdcEvent)
-		}
+		}(tableName)
 	}
+
+	wg.Wait()
 
 	return nil
 }

@@ -1,18 +1,11 @@
 [gravity]
-domain = "gravity"
-host = "0.0.0.0"
+domain = "default"
+host = "localhost"
 port = 4222
 pingInterval = 10
 maxPingsOutstanding = 3
 maxReconnects = -1
-
-[adapter]
-adapterID = "mongodb_adapter"
-adapterName = "Mongodb Adapter"
-
-# Authentication
-appID = "anonymous"
-accessKey = ""
+accessToken = ""
 
 [source]
 config = "./settings/sources.json"

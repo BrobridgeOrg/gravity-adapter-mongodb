@@ -1,23 +1,30 @@
 package instance
 
 import (
+	"fmt"
+	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 
 	adapter_service "git.brobridge.com/gravity/gravity-adapter-mongodb/pkg/adapter/service"
-	gravity_adapter "github.com/BrobridgeOrg/gravity-sdk/adapter"
+	gravity_adapter "github.com/BrobridgeOrg/gravity-sdk/v2/adapter"
 	log "github.com/sirupsen/logrus"
 )
 
 type AppInstance struct {
-	done             chan bool
+	done             chan os.Signal
 	adapter          *adapter_service.Adapter
 	adapterConnector *gravity_adapter.AdapterConnector
 }
 
 func NewAppInstance() *AppInstance {
 
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, os.Kill, syscall.SIGTERM)
+
 	a := &AppInstance{
-		done: make(chan bool),
+		done: sig,
 	}
 
 	a.adapter = adapter_service.NewAdapter(a)
@@ -46,11 +53,13 @@ func (a *AppInstance) Init() error {
 }
 
 func (a *AppInstance) Uninit() {
+	a.adapter.Uninit()
 }
 
 func (a *AppInstance) Run() error {
 
 	<-a.done
-
+	a.Uninit()
+	fmt.Println("Bye!")
 	return nil
 }

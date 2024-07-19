@@ -1,22 +1,25 @@
 {
-	"sources": {
-		"mongo_example": {
-			"disabled": false,
-			"uri": "mongodb://mongodb:27017/?authSource=admin&replicaSet=rs0test&readPreference=primary&appname=testCDC&ssl=false",
-			"ca_file": "",
-			"dbname": "gravity",
-			"initialLoad": false,
-			"tables": {
-				"gravity":{
-					"events": {
-						"//comment": "no support snapshot event, initialLoad events are in create / update /delete",
-						"//snapshot": "accountInitialized",
-						"create": "accountCreated",
-						"update": "accountUpdated",
-						"delete": "accountDeleted"
-					}
-				}
-			}
-		}
-	}
+    "sources": {
+        "my_mongo": {
+            "disabled": false,
+            "uri": "mongodb://mongodb:27017?replicaSet=mongodb",
+            "ca_file": "",
+            "username": "",
+            "password": "",
+            "authSource": "",
+            "dbname": "admin",
+            "initialLoad": false,
+            "tables": {
+                "account": {
+                    "events": {
+                        "//comment": "no support snapshot event, initialLoad events are in create / update /delete",
+                        "//snapshot": "accountInitialized",
+                        "create": "accountCreated",
+                        "update": "accountUpdated",
+                        "delete": "accountDeleted"
+                    }
+                }
+            }
+        }
+    }
 }

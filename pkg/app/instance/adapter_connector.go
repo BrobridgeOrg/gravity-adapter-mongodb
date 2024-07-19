@@ -2,12 +2,13 @@ package instance
 
 import (
 	"fmt"
-	gravity_adapter "github.com/BrobridgeOrg/gravity-sdk/adapter"
-	"github.com/BrobridgeOrg/gravity-sdk/core"
-	"github.com/BrobridgeOrg/gravity-sdk/core/keyring"
+	"time"
+
+	gravity_adapter "github.com/BrobridgeOrg/gravity-sdk/v2/adapter"
+	"github.com/BrobridgeOrg/gravity-sdk/v2/core"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
-	"time"
 )
 
 const (
@@ -23,6 +24,7 @@ func (a *AppInstance) initAdapterConnector() error {
 	viper.SetDefault("gravity.pingInterval", DefaultPingInterval)
 	viper.SetDefault("gravity.maxPingsOutstanding", DefaultMaxPingsOutstanding)
 	viper.SetDefault("gravity.maxReconnects", DefaultMaxReconnects)
+	viper.SetDefault("gravity.accessToken", "")
 
 	// Read configs
 	domain := viper.GetString("gravity.domain")
@@ -31,12 +33,14 @@ func (a *AppInstance) initAdapterConnector() error {
 	pingInterval := viper.GetInt64("gravity.pingInterval")
 	maxPingsOutstanding := viper.GetInt("gravity.maxPingsOutstanding")
 	maxReconnects := viper.GetInt("gravity.maxReconnects")
+	accessToken := viper.GetString("gravity.accessToken")
 
 	// Preparing options
 	options := core.NewOptions()
 	options.PingInterval = time.Duration(pingInterval) * time.Second
 	options.MaxPingsOutstanding = maxPingsOutstanding
 	options.MaxReconnects = maxReconnects
+	options.Token = accessToken
 
 	address := fmt.Sprintf("%s:%d", host, port)
 
@@ -58,23 +62,8 @@ func (a *AppInstance) initAdapterConnector() error {
 	opts := gravity_adapter.NewOptions()
 	opts.Domain = domain
 
-	// Loading access key
-	viper.SetDefault("adapter.appID", "anonymous")
-	viper.SetDefault("adapter.accessKey", "")
-	opts.Key = keyring.NewKey(viper.GetString("adapter.appID"), viper.GetString("adapter.accessKey"))
-
 	a.adapterConnector = gravity_adapter.NewAdapterConnectorWithClient(client, opts)
-
-	// Register adapter
-	adapterID := viper.GetString("adapter.adapterID")
-	adapterName := viper.GetString("adapter.adapterName")
-
-	log.WithFields(log.Fields{
-		"id":   adapterID,
-		"name": adapterName,
-	}).Info("Registering adapter")
-
-	err = a.adapterConnector.Register("mongodb", adapterID, adapterName)
+	err = a.adapterConnector.Connect(address, options)
 	if err != nil {
 		return err
 	}

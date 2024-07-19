@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: gravity-adapter
+    component: mongodb
+    release: adapter-mongodb-example
+  name: adapter-mongodb-example
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gravity-adapter
+      component: mongodb
+      release: adapter-mongodb-example
+  template:
+    metadata:
+      labels:
+        app: gravity-adapter
+        component: mongodb
+        release: adapter-mongodb-example
+    spec:
+      containers:
+      - env:
+        - name: GRAVITY_ADAPTER_MONGODB_GRAVITY_HOST
+          value: gravity-nats
+        - name: GRAVITY_ADAPTER_MONGODB_GRAVITY_PORT
+          value: "4222"
+        - name: GRAVITY_ADAPTER_MONGODB_GRAVITY_DOMAIN
+          value: "default"
+        - name: GRAVITY_ADAPTER_MONGODB_SOURCE_SETTINGS
+          value: |
+            {
+              "sources": {
+                "mongodb_source": {
+                  "disabled": false,
+                  "uri": "mongodb://mongodb-0.mongodb-svc.mongodb.svc.cluster.local:27017,mongodb-1.mongodb-svc.mongodb.svc.cluster.local:27017,mongodb-2.mongodb-svc.mongodb.svc.cluster.local:27017/?replicaSet=mongodb",
+                  "ca_file": "",
+                  "username": "",
+                  "password": "",
+                  "authSource": "",
+                  "dbname": "example",
+                  "initialLoad": false,
+                  "tables": {
+                    "account":{
+                      "events": {
+                        "//comment": "no support snapshot event, initialLoad events are in create / update / delete",
+                        "//snapshot": "accountInitialize",
+                        "create": "accountCreated",
+                        "update": "accountUpdated",
+                        "delete": "accountDeleted"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+        - name: GRAVITY_ADAPTER_MONGODB_STORE_ENABLED
+          value: "true"
+        - name: GRAVITY_ADAPTER_MONGODB_STORE_PATH
+          value: ./statestore
+        image: hb.k8sbridge.com/gravity/gravity-adapter-mongodb:v2.0.0
+        imagePullPolicy: IfNotPresent
+        name: adapter-mongodb
+        volumeMounts:
+        - mountPath: ./statestore
+          name: adapter-mongodb-store
+      initContainers:
+      - command:
+        - sh
+        - -c
+        - until nc -z -w 2 gravity-nats 4222; do echo watting for gravity-nats:4222; 
+          sleep 1; done
+        image: busybox:1.28
+        imagePullPolicy: IfNotPresent
+        name: init-adapter-mongodb
+      securityContext: 
+        securityContext:
+        fsGroup: 1001
+        runAsGroup: 1001
+        runAsUser: 1001
+      volumes:
+      - name: adapter-mongodb-store
+        persistentVolumeClaim:
+          claimName: adapter-mongodb-pvc
+  volumeClaimTemplates:
+    - metadata:
+        name: adapter-mongodb-store
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 200Mi
+        #storageClassName: "standard"

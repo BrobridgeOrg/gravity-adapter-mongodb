@@ -71,3 +71,7 @@ func (adapter *Adapter) Init() error {
 
 	return nil
 }
+
+func (adapter *Adapter) Uninit() error {
+	return adapter.sm.Uninit()
+}

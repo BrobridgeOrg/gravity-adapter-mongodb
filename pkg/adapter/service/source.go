@@ -10,7 +10,7 @@ import (
 	"github.com/BrobridgeOrg/broton"
 	"github.com/spf13/viper"
 
-	gravity_adapter "github.com/BrobridgeOrg/gravity-sdk/adapter"
+	gravity_adapter "github.com/BrobridgeOrg/gravity-sdk/v2/adapter"
 	parallel_chunked_flow "github.com/cfsghost/parallel-chunked-flow"
 	log "github.com/sirupsen/logrus"
 )
@@ -32,6 +32,7 @@ type Source struct {
 	name      string
 	parser    *parallel_chunked_flow.ParallelChunkedFlow
 	tables    map[string]SourceTable
+	stopping  bool
 }
 
 type Request struct {
@@ -93,13 +94,16 @@ func NewSource(adapter *Adapter, name string, sourceInfo *SourceInfo) *Source {
 		ChunkSize:  512,
 		ChunkCount: 512,
 		Handler: func(data interface{}, output func(interface{})) {
-			id := atomic.AddUint64((*uint64)(&counter), 1)
-			if id%100 == 0 {
-				log.Info(id)
-			}
+			/*
+				id := atomic.AddUint64((*uint64)(&counter), 1)
+				if id%100 == 0 {
+					log.Info(id)
+				}
+			*/
 
 			req := source.prepareRequest(data.(*CDCEvent))
 			if req == nil {
+				log.Error("req in nil")
 				return
 			}
 
@@ -135,6 +139,17 @@ func (source *Source) parseEventName(event *CDCEvent) string {
 	}
 
 	return eventName
+}
+
+func (source *Source) Uninit() error {
+	fmt.Println("Stopping ...")
+	source.stopping = true
+	source.database.stopping = true
+	time.Sleep(1 * time.Second)
+	<-source.connector.PublishAsyncComplete()
+	source.adapter.storeMgr.Close()
+	return nil
+
 }
 
 func (source *Source) Init() error {
@@ -194,21 +209,25 @@ func (source *Source) Init() error {
 		"tables": tables,
 	}).Info("Preparing to watch tables")
 
-	err = source.database.StartCDC(tables, source.info.InitialLoad, func(event *CDCEvent) {
+	log.Info("Ready to start CDC, tables: ", tables)
+	// err = source.database.StartCDC(tables, source.info.InitialLoad, func(event *CDCEvent) {
+	go func(tables map[string]SourceTable, initialLoad bool) {
+		err = source.database.StartCDC(tables, source.info.InitialLoad, func(event *CDCEvent) {
 
-		eventName := source.parseEventName(event)
+			eventName := source.parseEventName(event)
 
-		// filter
-		if eventName == "" {
-			log.Error("eventName is empty")
-			return
+			// filter
+			if eventName == "" {
+				log.Error("eventName is empty")
+				return
+			}
+
+			source.incoming <- event
+		})
+		if err != nil {
+			log.Fatal(err)
 		}
-
-		source.incoming <- event
-	})
-	if err != nil {
-		return err
-	}
+	}(source.tables, source.info.InitialLoad)
 
 	return nil
 }
@@ -235,6 +254,7 @@ func (source *Source) requestHandler() {
 		case req := <-source.parser.Output():
 			// TODO: retry
 			if req == nil {
+				log.Error("req in nil")
 				break
 			}
 			source.HandleRequest(req.(*Request))
@@ -284,20 +304,33 @@ func (source *Source) prepareRequest(event *CDCEvent) *Request {
 
 func (source *Source) HandleRequest(request *Request) {
 
+	if source.stopping {
+		time.Sleep(time.Second)
+		return
+	}
+
 	for {
-		meta := make(map[string]interface{})
-		meta["Msg-Id"] = fmt.Sprintf("%s-%s-%s", source.name, request.Table, request.ResumeToken)
 		// Using new SDK to re-implement this part
-		err := source.connector.Publish(request.Req.EventName, request.Req.Payload, meta)
+		meta := make(map[string]string)
+		meta["Nats-Msg-Id"] = fmt.Sprintf("%s-%s-%s", source.name, request.Table, request.ResumeToken)
+		_, err := source.connector.PublishAsync(request.Req.EventName, request.Req.Payload, meta)
 		if err != nil {
 			log.Error("Failed to get publish Request:", err)
+			log.Debug("EventName: ", request.Req.EventName, " Payload: ", string(request.Req.Payload))
 			time.Sleep(time.Second)
 			continue
 		}
+		log.Debug("EventName: ", request.Req.EventName)
+		log.Trace("Payload: ", string(request.Req.Payload))
 		break
 	}
 
 	if source.store == nil {
+		id := atomic.AddUint64((*uint64)(&counter), 1)
+		if id%10000 == 0 {
+			<-source.connector.PublishAsyncComplete()
+			counter = 0
+		}
 		return
 	}
 
@@ -311,4 +344,9 @@ func (source *Source) HandleRequest(request *Request) {
 		break
 	}
 
+	id := atomic.AddUint64((*uint64)(&counter), 1)
+	if id%10000 == 0 {
+		<-source.connector.PublishAsyncComplete()
+		counter = 0
+	}
 }
