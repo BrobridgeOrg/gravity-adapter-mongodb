@@ -217,7 +217,7 @@ docker exec -it mongo1 mongosh --eval "rs.status()"
    ```
 
 ### 設定 mongodb tls 連線方式
-1. 將 ca 憑證建立congigmap
+1. 將 ca 憑證建立configmap
    ```
    kubectl --namespace <your-namespace> create configmap ca-config-map --from-file=ca.crt=<path-to-ca.crt>
    ```
