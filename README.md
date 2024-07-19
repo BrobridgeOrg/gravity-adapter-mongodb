@@ -20,7 +20,6 @@ accessToken = ""
 [adapter]
 adapterID = "mongodb_adapter"
 adapterName = "Mongodb Adapter"
-"
 
 [source]
 config = "./settings/sources.json"
@@ -108,7 +107,7 @@ env:
  資料庫的連線密碼可由環境變數帶入(需要使用工具做 AES 加密)，其環境變數如下：
   **[SOURCE_NAME] + \_ + PASSWORD**
 >
-Kubernetes 可以用 secret 帶入環境變數，範例如下
+Kubernetes 可以用 secret 帶入環境變數，範例如下:
 ```
 ...
 - env:
