@@ -180,7 +180,7 @@ env:
 ---
 ## Build
 ```
-podman buildx build --platform linux/amd64 -t hb.k8sbridge.com/gravity/gravity-adapter-mongodb:v2.0.0 -f build/docker/Dockerfile .
+podman buildx build --platform linux/amd64 --build-arg="AES_KEY=**********" -t hb.k8sbridge.com/gravity/gravity-adapter-mongodb:v2.0.0 -f build/docker/Dockerfile .
 ```
 
 ---

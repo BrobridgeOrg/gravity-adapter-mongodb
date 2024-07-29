@@ -7,7 +7,8 @@ import (
 	"encoding/hex"
 )
 
-var key = []byte("P27erQmsrFRBu7ae61L8I1jjbBRAPJul")
+var aesKey = "********************************"
+var key = []byte("aesKey")
 
 func PKCS7Padding(ciphertext []byte, blockSize int) []byte {
 	padding := blockSize - len(ciphertext)%blockSize

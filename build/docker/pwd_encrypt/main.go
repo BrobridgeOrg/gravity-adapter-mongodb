@@ -12,7 +12,8 @@ import (
 )
 
 var (
-	key       = []byte("P27erQmsrFRBu7ae61L8I1jjbBRAPJul")
+	aesKey    = "********************************"
+	key       = []byte("aesKey")
 	plaintext = flag.String("plaintext", "", "insert password string")
 	ctext     = flag.String("ciphertext", "", "insert ciphertext string")
 )
@@ -29,7 +30,7 @@ func PKCS7UnPadding(origData []byte) []byte {
 	return origData[:(length - unpadding)]
 }
 
-//Aes Encrypt
+// Aes Encrypt
 func AesEncrypt(plaintext []byte) (string, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
