@@ -13,7 +13,7 @@ import (
 
 var (
 	aesKey    = "********************************"
-	key       = []byte("aesKey")
+	key       = []byte(aesKey)
 	plaintext = flag.String("plaintext", "", "insert password string")
 	ctext     = flag.String("ciphertext", "", "insert ciphertext string")
 )
