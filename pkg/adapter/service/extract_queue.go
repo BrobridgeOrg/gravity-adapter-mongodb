@@ -55,6 +55,50 @@ func (database *Database) parseInsertSQL(event map[string]interface{}) (*CDCEven
 
 }
 
+func (database *Database) parseReplaceSQL(event map[string]interface{}) (*CDCEvent, error) {
+
+	// Parsing event
+	if event["documentKey"] == nil {
+		return nil, errors.New("Replace event parsing error(documentKey not found).")
+	}
+	dk := event["documentKey"].(map[string]interface{})
+
+	beforeValue := make(map[string]*parser.Value)
+	for key, value := range dk {
+		beforeValue[key] = &parser.Value{
+			Data: value,
+		}
+	}
+
+	// Parsing event
+	if event["fullDocument"] == nil {
+		return nil, errors.New("Replace event parsing error(fullDocument not found).")
+	}
+	e := event["fullDocument"].(map[string]interface{})
+
+	afterValue := make(map[string]*parser.Value)
+	for key, value := range e {
+		afterValue[key] = &parser.Value{
+			Data: value,
+		}
+	}
+
+	if event["ns"] == nil {
+		return nil, errors.New("Replace event parsing error(table not found).")
+	}
+	ns := event["ns"].(map[string]interface{})
+	table := ns["coll"].(string)
+
+	// Prepare CDC event
+	result := CDCEvent{
+		Operation: UpdateOperation,
+		Table:     table,
+		After:     afterValue,
+		Before:    beforeValue,
+	}
+	return &result, nil
+}
+
 func (database *Database) parseUpdateSQL(event map[string]interface{}) (*CDCEvent, error) {
 
 	// Parsing event
@@ -98,7 +142,6 @@ func (database *Database) parseUpdateSQL(event map[string]interface{}) (*CDCEven
 	}
 	return &result, nil
 }
-
 func (database *Database) parseDeleteSQL(event map[string]interface{}) (*CDCEvent, error) {
 	//TODO
 	// Parsing event
@@ -140,6 +183,8 @@ func (database *Database) processEvent(event map[string]interface{}) (*CDCEvent,
 		return database.parseUpdateSQL(event)
 	case "delete":
 		return database.parseDeleteSQL(event)
+	case "replace":
+		return database.parseReplaceSQL(event)
 	}
 
 	return nil, errors.New("Unsupported operation: " + event["operationType"].(string))
