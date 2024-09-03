@@ -67,7 +67,13 @@ func (database *Database) Connect(info *SourceInfo) error {
 	}
 
 	// Set client options
-	clientOptions := options.Client().ApplyURI(info.Uri)
+	clientOptions := options.Client().ApplyURI(info.Uri).
+		SetMaxPoolSize(10).
+		SetMinPoolSize(10).
+		SetMaxConnIdleTime(10 * time.Minute).
+		SetHeartbeatInterval(10 * time.Second).
+		SetSocketTimeout(10 * time.Second).
+		SetServerSelectionTimeout(10 * time.Second)
 
 	// Set auth
 	if len(info.Username) > 0 && len(info.Password) > 0 {
@@ -142,43 +148,92 @@ func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bo
 					opts.SetResumeAfter(rt)
 				}
 
-				changeStream, err := db.Collection(tableName).Watch(context.TODO(), matchStage, opts)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				changeStream, err := db.Collection(tableName).Watch(ctx, matchStage, opts)
 				if err != nil {
 					log.WithFields(log.Fields{
 						"Table": tableName,
 					}).Error(err)
-					return
+					log.Info("Retry ...")
+					cancel()
+					time.Sleep(1 * time.Second)
+					continue
 				}
 
-				defer changeStream.Close(context.TODO())
+				defer changeStream.Close(ctx)
 
-				for changeStream.Next(context.TODO()) {
-					event := make(map[string]interface{}, 0)
-					changeStream.Decode(event)
-					resumeToken := changeStream.ResumeToken()
-					database.resumeToken = string(resumeToken)
-
-					// parsing event
-					cdcEvent, err := database.processEvent(event)
-					if err != nil {
+				for {
+					// Check stopping flag periodically
+					if database.stopping {
 						log.WithFields(log.Fields{
 							"Table": tableName,
-						}).Error(err)
-						continue
+						}).Info("Shutdown flag is set. Exiting ChangeStream loop.")
+						cancel()
+						return
 					}
+					if changeStream.Next(ctx) {
+						event := make(map[string]interface{}, 0)
+						if err := changeStream.Decode(&event); err != nil {
+							log.WithFields(log.Fields{
+								"Table": tableName,
+							}).Error("Error decoding event:", err)
+							log.Info("Skip ...")
+							continue
+						}
 
-					// add resumeToken to cdcEvent
-					cdcEvent.ResumeToken = database.resumeToken
-					//log.Info("resumeToken: ", database.resumeToken)
+						resumeToken := changeStream.ResumeToken()
+						database.resumeToken = string(resumeToken)
 
-					// Send event
-					fn(cdcEvent)
+						// parsing event
+						cdcEvent, err := database.processEvent(event)
+						if err != nil {
+							log.WithFields(log.Fields{
+								"Table": tableName,
+							}).Error(err)
+							log.Info("Skip ...")
+							continue
+						}
+
+						// add resumeToken to cdcEvent
+						cdcEvent.ResumeToken = database.resumeToken
+
+						// Send event
+						// TODO Replace event workaround send delete and insert
+						if cdcEvent.Operation == ReplaceOperation {
+							cdcEvent.ReplaceOp = database.resumeToken
+							// send delete event
+							cdcEventDelete := *cdcEvent
+							cdcEventDelete.Operation = DeleteOperation
+							fn(&cdcEventDelete)
+
+							// send insert event
+							cdcEventInsert := *cdcEvent
+							cdcEventInsert.Operation = InsertOperation
+							fn(&cdcEventInsert)
+						} else {
+							fn(cdcEvent)
+						}
+					} else if err := changeStream.Err(); err != nil {
+						log.WithFields(log.Fields{
+							"Table": tableName,
+						}).Error("ChangeStream encountered an error:", err)
+						cancel()
+						log.Info("Retry ...")
+						break
+					}
 				}
+
 			}
 		}(tableName)
 	}
 
 	wg.Wait()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	database.db.Client().Disconnect(ctx)
+	log.Info("Disconnect DB")
 
 	return nil
 }

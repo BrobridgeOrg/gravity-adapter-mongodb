@@ -23,22 +23,24 @@ type Packet struct {
 }
 
 type Source struct {
-	adapter   *Adapter
-	info      *SourceInfo
-	store     *broton.Store
-	database  *Database
-	connector *gravity_adapter.AdapterConnector
-	incoming  chan *CDCEvent
-	name      string
-	parser    *parallel_chunked_flow.ParallelChunkedFlow
-	tables    map[string]SourceTable
-	stopping  bool
+	adapter      *Adapter
+	info         *SourceInfo
+	store        *broton.Store
+	database     *Database
+	connector    *gravity_adapter.AdapterConnector
+	incoming     chan *CDCEvent
+	name         string
+	parser       *parallel_chunked_flow.ParallelChunkedFlow
+	tables       map[string]SourceTable
+	stopping     bool
+	ReplaceToken map[string]string
 }
 
 type Request struct {
 	ResumeToken string
 	Req         *Packet
 	Table       string
+	ReplaceOp   string
 }
 
 var requestPool = sync.Pool{
@@ -79,13 +81,14 @@ func NewSource(adapter *Adapter, name string, sourceInfo *SourceInfo) *Source {
 	}
 
 	source := &Source{
-		adapter:  adapter,
-		info:     sourceInfo,
-		store:    nil,
-		database: NewDatabase(),
-		incoming: make(chan *CDCEvent, 204800),
-		name:     name,
-		tables:   tables,
+		adapter:      adapter,
+		info:         sourceInfo,
+		store:        nil,
+		database:     NewDatabase(),
+		incoming:     make(chan *CDCEvent, 204800),
+		name:         name,
+		tables:       tables,
+		ReplaceToken: make(map[string]string, 0),
 	}
 
 	// Initialize parapllel chunked flow
@@ -145,7 +148,7 @@ func (source *Source) Uninit() error {
 	fmt.Println("Stopping ...")
 	source.stopping = true
 	source.database.stopping = true
-	time.Sleep(1 * time.Second)
+	time.Sleep(3 * time.Second)
 	<-source.connector.PublishAsyncComplete()
 	source.adapter.storeMgr.Close()
 	return nil
@@ -293,6 +296,7 @@ func (source *Source) prepareRequest(event *CDCEvent) *Request {
 	request := requestPool.Get().(*Request)
 	request.ResumeToken = event.ResumeToken
 	request.Table = event.Table
+	request.ReplaceOp = event.ReplaceOp
 
 	request.Req = &Packet{
 		EventName: eventName,
@@ -312,7 +316,7 @@ func (source *Source) HandleRequest(request *Request) {
 	for {
 		// Using new SDK to re-implement this part
 		meta := make(map[string]string)
-		meta["Nats-Msg-Id"] = fmt.Sprintf("%s-%s-%s", source.name, request.Table, request.ResumeToken)
+		meta["Nats-Msg-Id"] = fmt.Sprintf("%s-%s-%s-%s", source.name, request.Table, request.Req.EventName, request.ResumeToken)
 		_, err := source.connector.PublishAsync(request.Req.EventName, request.Req.Payload, meta)
 		if err != nil {
 			log.Error("Failed to get publish Request:", err)
@@ -335,6 +339,16 @@ func (source *Source) HandleRequest(request *Request) {
 	}
 
 	for {
+
+		// replace operation = create and update
+		if request.ReplaceOp != "" {
+			if _, ok := source.ReplaceToken[request.ReplaceOp]; !ok {
+				source.ReplaceToken[request.ReplaceOp] = request.ReplaceOp
+				break
+			} else {
+				delete(source.ReplaceToken, request.ReplaceOp)
+			}
+		}
 		err := source.store.PutString("status", []byte("RESUME_TOKEN"), request.ResumeToken)
 		if err != nil {
 			log.Error("Failed to update Position Name")

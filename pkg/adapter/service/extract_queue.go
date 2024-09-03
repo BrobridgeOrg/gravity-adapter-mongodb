@@ -12,6 +12,7 @@ const (
 	InsertOperation = OperationType(iota + 1)
 	UpdateOperation
 	DeleteOperation
+	ReplaceOperation
 )
 
 type CDCEvent struct {
@@ -20,6 +21,7 @@ type CDCEvent struct {
 	Table       string
 	After       map[string]*parser.Value
 	Before      map[string]*parser.Value
+	ReplaceOp   string
 }
 
 func (database *Database) parseInsertSQL(event map[string]interface{}) (*CDCEvent, error) {
@@ -91,7 +93,7 @@ func (database *Database) parseReplaceSQL(event map[string]interface{}) (*CDCEve
 
 	// Prepare CDC event
 	result := CDCEvent{
-		Operation: UpdateOperation,
+		Operation: ReplaceOperation,
 		Table:     table,
 		After:     afterValue,
 		Before:    beforeValue,
