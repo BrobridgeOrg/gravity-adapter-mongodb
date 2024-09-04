@@ -5,8 +5,7 @@ on:
     tags: [ '*' ]
     #branches: [ 'main' ]
   schedule:
-    #- cron: '0 0 1 * *'
-    - cron: '*/3 * * * *'
+    - cron: '0 0 1 * *'
 
 env:
   REGISTRY: ghcr.io
