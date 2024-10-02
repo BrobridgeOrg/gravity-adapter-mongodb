@@ -245,7 +245,15 @@ func (source *Source) eventReceiver() {
 	for {
 		select {
 		case msg := <-source.incoming:
-			source.parser.Push(msg)
+			for {
+				err := source.parser.Push(msg)
+				if err != nil {
+					log.Warn(err, ", retry ...")
+					time.Sleep(time.Second)
+					continue
+				}
+				break
+			}
 		}
 	}
 }
@@ -284,6 +292,14 @@ func (source *Source) prepareRequest(event *CDCEvent) *Request {
 	for k, v := range event.After {
 
 		data[k] = v.Data
+	}
+
+	if event.Operation == UpdateOperation && len(event.UpdateEventRemoveField) > 0 {
+		removeFields := []string{}
+		for k, _ := range event.UpdateEventRemoveField {
+			removeFields = append(removeFields, k)
+		}
+		data["$removedFields"] = removeFields
 	}
 
 	payload, err := json.Marshal(data)
@@ -349,6 +365,7 @@ func (source *Source) HandleRequest(request *Request) {
 				delete(source.ReplaceToken, request.ReplaceOp)
 			}
 		}
+
 		err := source.store.PutString("status", []byte("RESUME_TOKEN"), request.ResumeToken)
 		if err != nil {
 			log.Error("Failed to update Position Name")

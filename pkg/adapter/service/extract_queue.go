@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	parser "git.brobridge.com/gravity/gravity-adapter-mongodb/pkg/adapter/service/parser"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type OperationType int8
@@ -16,12 +17,13 @@ const (
 )
 
 type CDCEvent struct {
-	ResumeToken string
-	Operation   OperationType
-	Table       string
-	After       map[string]*parser.Value
-	Before      map[string]*parser.Value
-	ReplaceOp   string
+	ResumeToken            string
+	Operation              OperationType
+	Table                  string
+	After                  map[string]*parser.Value
+	Before                 map[string]*parser.Value
+	ReplaceOp              string
+	UpdateEventRemoveField map[string]*parser.Value
 }
 
 func (database *Database) parseInsertSQL(event map[string]interface{}) (*CDCEvent, error) {
@@ -129,6 +131,14 @@ func (database *Database) parseUpdateSQL(event map[string]interface{}) (*CDCEven
 		}
 	}
 
+	removeData := updateDesc["removedFields"].(primitive.A)
+	removeValue := make(map[string]*parser.Value)
+	for _, field := range removeData {
+		removeValue[field.(string)] = &parser.Value{
+			Data: nil,
+		}
+	}
+
 	if event["ns"] == nil {
 		return nil, errors.New("Update event parsing error(table not found).")
 	}
@@ -137,10 +147,11 @@ func (database *Database) parseUpdateSQL(event map[string]interface{}) (*CDCEven
 
 	// Prepare CDC event
 	result := CDCEvent{
-		Operation: UpdateOperation,
-		Table:     table,
-		After:     afterValue,
-		Before:    beforeValue,
+		Operation:              UpdateOperation,
+		Table:                  table,
+		After:                  afterValue,
+		Before:                 beforeValue,
+		UpdateEventRemoveField: removeValue,
 	}
 	return &result, nil
 }

@@ -177,8 +177,7 @@ func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bo
 						if err := changeStream.Decode(&event); err != nil {
 							log.WithFields(log.Fields{
 								"Table": tableName,
-							}).Error("Error decoding event:", err)
-							log.Info("Skip ...")
+							}).Error("Error decoding event:", err, ", Skip ...")
 							continue
 						}
 
@@ -188,10 +187,14 @@ func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bo
 						// parsing event
 						cdcEvent, err := database.processEvent(event)
 						if err != nil {
+							if event["operationType"].(string) == "invalidate" {
+								log.Warn("Change stream has been invalidated. The application will attempt to reset the change stream token and resume monitoring.")
+								database.resumeToken = ""
+								break
+							}
 							log.WithFields(log.Fields{
 								"Table": tableName,
-							}).Error(err)
-							log.Info("Skip ...")
+							}).Error(err, ", Skip ...")
 							continue
 						}
 
