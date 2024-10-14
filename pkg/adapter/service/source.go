@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -8,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/BrobridgeOrg/broton"
+	"github.com/nats-io/nats.go"
 	"github.com/spf13/viper"
 
 	gravity_adapter "github.com/BrobridgeOrg/gravity-sdk/v2/adapter"
@@ -34,6 +36,7 @@ type Source struct {
 	tables       map[string]SourceTable
 	stopping     bool
 	ReplaceToken map[string]string
+	ackFutures   []nats.PubAckFuture
 }
 
 type Request struct {
@@ -89,6 +92,7 @@ func NewSource(adapter *Adapter, name string, sourceInfo *SourceInfo) *Source {
 		name:         name,
 		tables:       tables,
 		ReplaceToken: make(map[string]string, 0),
+		ackFutures:   make([]nats.PubAckFuture, 0),
 	}
 
 	// Initialize parapllel chunked flow
@@ -149,7 +153,8 @@ func (source *Source) Uninit() error {
 	source.stopping = true
 	source.database.stopping = true
 	time.Sleep(3 * time.Second)
-	<-source.connector.PublishAsyncComplete()
+	//<-source.connector.PublishAsyncComplete()
+	source.checkPublishAsyncComplete()
 	source.adapter.storeMgr.Close()
 	return nil
 
@@ -330,31 +335,24 @@ func (source *Source) HandleRequest(request *Request) {
 	}
 
 	for {
+
 		// Using new SDK to re-implement this part
 		meta := make(map[string]string)
 		meta["Nats-Msg-Id"] = fmt.Sprintf("%s-%s-%s-%s", source.name, request.Table, request.Req.EventName, request.ResumeToken)
-		_, err := source.connector.PublishAsync(request.Req.EventName, request.Req.Payload, meta)
+		future, err := source.connector.PublishAsync(request.Req.EventName, request.Req.Payload, meta)
 		if err != nil {
 			log.Error("Failed to get publish Request:", err)
 			log.Debug("EventName: ", request.Req.EventName, " Payload: ", string(request.Req.Payload))
 			time.Sleep(time.Second)
 			continue
 		}
+		source.ackFutures = append(source.ackFutures, future)
 		log.Debug("EventName: ", request.Req.EventName)
 		log.Trace("Payload: ", string(request.Req.Payload))
 		break
 	}
 
-	if source.store == nil {
-		id := atomic.AddUint64((*uint64)(&counter), 1)
-		if id%10000 == 0 {
-			<-source.connector.PublishAsyncComplete()
-			counter = 0
-		}
-		return
-	}
-
-	for {
+	for source.store != nil {
 
 		// replace operation = create and update
 		if request.ReplaceOp != "" {
@@ -377,7 +375,63 @@ func (source *Source) HandleRequest(request *Request) {
 
 	id := atomic.AddUint64((*uint64)(&counter), 1)
 	if id%10000 == 0 {
-		<-source.connector.PublishAsyncComplete()
+		//source.checkPublishAsyncComplete()
 		counter = 0
+
+		lastFuture := 0
+		isError := false
+	RETRY:
+		for i, future := range source.ackFutures {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			//defer cancel()
+			select {
+			case <-future.Ok():
+				//log.Infof("Message %d acknowledged: %+v", i, pubAck)
+			case <-ctx.Done():
+				log.Errorf("Failed to publish message, retry ...")
+				lastFuture = i
+				isError = true
+				cancel()
+				break RETRY
+			}
+			cancel()
+		}
+
+		if isError {
+			//log.Debug("cleanup publisher and start retry..", len(source.ackFutures[lastFuture:]))
+			source.connector.GetJetStream().CleanupPublisher()
+			for _, future := range source.ackFutures[lastFuture:] {
+				// send msg with Sync mode
+				for {
+					_, err := source.connector.GetJetStream().PublishMsg(future.Msg())
+					if err != nil {
+						log.Error(err, "retry it...")
+						time.Sleep(time.Second)
+						continue
+					}
+					break
+				}
+
+			}
+			//log.Debug("retry done")
+
+		}
+		source.ackFutures = make([]nats.PubAckFuture, 0)
+	}
+}
+
+func (source *Source) checkPublishAsyncComplete() {
+	// timeout 60s
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	select {
+	case <-source.connector.PublishAsyncComplete():
+		//log.Info("All messages acknowledged.")
+	case <-ctx.Done():
+		// if the context timeout or canceled, ctx.Done() will return.
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Error("Timeout waiting for acknowledgements. AsyncPending: ", source.connector.GetJetStream().PublishAsyncPending())
+		}
 	}
 }

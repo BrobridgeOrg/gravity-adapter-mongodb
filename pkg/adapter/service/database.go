@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io/ioutil"
+	"strings"
 	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -119,7 +120,56 @@ func (database *Database) GetConnection() *mongo.Database {
 	return database.db
 }
 
+func (database *Database) doInitialLoad(tables map[string]SourceTable, fn func(*CDCEvent)) error {
+	db := database.GetConnection()
+	for tableName := range tables {
+		counter := 0
+		ctx := context.Background()
+		cursor, err := db.Collection(tableName).Find(ctx, bson.M{})
+		if err != nil {
+			log.Error(err)
+			continue
+		}
+
+		for cursor.Next(ctx) {
+			var doc bson.M
+			if err := cursor.Decode(&doc); err != nil {
+				log.Printf("Error decoding document: %v", err)
+				continue
+			}
+			cdcEvent, err := database.parseSnapshotEvent(tableName, doc) // 處理現有文檔
+			if err != nil {
+				log.Error(err)
+				continue
+			}
+			//log.Info(cdcEvent)
+			counter++
+			cdcEvent.ResumeToken = fmt.Sprintf("snapshot-%s-%d", tableName, counter)
+			fn(cdcEvent)
+		}
+
+		if err := cursor.Err(); err != nil {
+			log.Error(err)
+			continue
+		}
+		cursor.Close(ctx)
+	}
+	return nil
+
+}
 func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bool, fn func(*CDCEvent)) error {
+
+	if initialLoad && database.resumeToken == "" {
+		err := database.doInitialLoad(tables, fn)
+		if err != nil {
+			return err
+		}
+		initialLoad = false
+		database.resumeToken = ""
+	}
+	if strings.HasPrefix(database.resumeToken, "snapshot-") {
+		database.resumeToken = ""
+	}
 
 	db := database.GetConnection()
 
@@ -129,6 +179,7 @@ func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bo
 		wg.Add(1)
 		go func(tableName string) {
 			defer wg.Done()
+			var csid interface{}
 
 			for {
 				log.WithFields(log.Fields{
@@ -137,11 +188,10 @@ func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bo
 
 				matchStage := bson.D{}
 				opts := options.ChangeStream().SetMaxAwaitTime(2 * time.Second)
-				if initialLoad && database.resumeToken == "" {
-					// InitialLoad
-					opts.SetStartAtOperationTime(&primitive.Timestamp{
-						T: 0,
-					})
+
+				if csid != nil && database.resumeToken == "" {
+					//invalidate resumeToken
+					opts.SetStartAfter(csid)
 				} else if database.resumeToken != "" {
 					rt := bson.Raw{}
 					bson.Unmarshal([]byte(database.resumeToken), &rt)
@@ -189,6 +239,10 @@ func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bo
 						if err != nil {
 							if event["operationType"].(string) == "invalidate" {
 								log.Warn("Change stream has been invalidated. The application will attempt to reset the change stream token and resume monitoring.")
+								if id, ok := event["_id"].(interface{}); ok {
+									csid = id
+								}
+
 								database.resumeToken = ""
 								break
 							}

@@ -26,6 +26,22 @@ type CDCEvent struct {
 	UpdateEventRemoveField map[string]*parser.Value
 }
 
+func (database *Database) parseSnapshotEvent(table string, event map[string]interface{}) (*CDCEvent, error) {
+	afterValue := make(map[string]*parser.Value)
+	for key, value := range event {
+		afterValue[key] = &parser.Value{
+			Data: value,
+		}
+	}
+
+	result := CDCEvent{
+		Operation: InsertOperation,
+		Table:     table,
+		After:     afterValue,
+	}
+
+	return &result, nil
+}
 func (database *Database) parseInsertSQL(event map[string]interface{}) (*CDCEvent, error) {
 
 	// Parsing event

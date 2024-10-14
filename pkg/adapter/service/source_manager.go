@@ -82,7 +82,9 @@ func (sm *SourceManager) Initialize() error {
 			info.Password = pwd
 		}
 
-		source := NewSource(sm.adapter, name, &info)
+		sourceInfo := info
+		source := NewSource(sm.adapter, name, &sourceInfo)
+		//source := NewSource(sm.adapter, name, &info)
 		err := source.Init()
 		if err != nil {
 			log.Error(err)
