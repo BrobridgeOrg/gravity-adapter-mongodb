@@ -1,11 +1,12 @@
 [gravity]
 domain = "default"
-host = "localhost"
-port = 4222
+host = "192.168.8.227"
+port = 32803
 pingInterval = 10
 maxPingsOutstanding = 3
 maxReconnects = -1
 accessToken = ""
+publishBatchSize = 1000
 
 [source]
 config = "./settings/sources.json"

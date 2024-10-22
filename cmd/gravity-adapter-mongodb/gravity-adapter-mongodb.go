@@ -2,8 +2,12 @@ package main
 
 import (
 	"fmt"
+	_ "go.uber.org/automaxprocs"
 	"os"
-	"runtime"
+	//	"os/signal"
+	//	"time"
+	//	"runtime"
+	//	"runtime/pprof"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -42,23 +46,38 @@ func init() {
 		log.Warn("No configuration file was loaded")
 	}
 
-	runtime.GOMAXPROCS(8)
+	//runtime.GOMAXPROCS(8)
 	/*
-		return
+		go func() {
+
+			f, err := os.Create("mem-profile.prof")
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer f.Close()
+
+			//runtime.GC()
+			time.Sleep(30 * time.Second)
+			pprof.WriteHeapProfile(f)
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, os.Interrupt, os.Kill)
+			<-sig
+		}()
+
 		go func() {
 
 			f, err := os.Create("cpu-profile.prof")
 			if err != nil {
 				log.Fatal(err)
 			}
+			defer f.Close()
 
 			pprof.StartCPUProfile(f)
+			defer pprof.StopCPUProfile()
 
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, os.Interrupt, os.Kill)
 			<-sig
-			pprof.StopCPUProfile()
-
 			os.Exit(0)
 		}()
 	*/

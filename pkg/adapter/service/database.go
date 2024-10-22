@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"io/ioutil"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -124,8 +124,9 @@ func (database *Database) doInitialLoad(tables map[string]SourceTable, fn func(*
 	db := database.GetConnection()
 	for tableName := range tables {
 		counter := 0
+		opts := options.Find().SetBatchSize(100)
 		ctx := context.Background()
-		cursor, err := db.Collection(tableName).Find(ctx, bson.M{})
+		cursor, err := db.Collection(tableName).Find(ctx, bson.M{}, opts)
 		if err != nil {
 			log.Error(err)
 			continue
@@ -144,7 +145,7 @@ func (database *Database) doInitialLoad(tables map[string]SourceTable, fn func(*
 			}
 			//log.Info(cdcEvent)
 			counter++
-			cdcEvent.ResumeToken = fmt.Sprintf("snapshot-%s-%d", tableName, counter)
+			cdcEvent.ResumeToken = "snapshot-" + tableName + "-" + strconv.Itoa(counter)
 			fn(cdcEvent)
 		}
 
@@ -223,6 +224,7 @@ func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bo
 						return
 					}
 					if changeStream.Next(ctx) {
+
 						event := make(map[string]interface{}, 0)
 						if err := changeStream.Decode(&event); err != nil {
 							log.WithFields(log.Fields{
@@ -258,16 +260,22 @@ func (database *Database) StartCDC(tables map[string]SourceTable, initialLoad bo
 						// Send event
 						// TODO Replace event workaround send delete and insert
 						if cdcEvent.Operation == ReplaceOperation {
-							cdcEvent.ReplaceOp = database.resumeToken
-							// send delete event
-							cdcEventDelete := *cdcEvent
+							cdcEventDelete := cdcEventPool.Get().(*CDCEvent)
+							cdcEventDelete.ReplaceOp = database.resumeToken
 							cdcEventDelete.Operation = DeleteOperation
-							fn(&cdcEventDelete)
+							cdcEventDelete.Table = cdcEvent.Table
+							cdcEventDelete.After = cdcEvent.After
+							cdcEventDelete.Before = cdcEvent.Before
+							fn(cdcEventDelete)
 
-							// send insert event
-							cdcEventInsert := *cdcEvent
+							cdcEventInsert := cdcEventPool.Get().(*CDCEvent)
+							cdcEventInsert.ReplaceOp = database.resumeToken
 							cdcEventInsert.Operation = InsertOperation
-							fn(&cdcEventInsert)
+							cdcEventInsert.Table = cdcEvent.Table
+							cdcEventInsert.After = cdcEvent.After
+							fn(cdcEventInsert)
+
+							cdcEventPool.Put(cdcEvent)
 						} else {
 							fn(cdcEvent)
 						}

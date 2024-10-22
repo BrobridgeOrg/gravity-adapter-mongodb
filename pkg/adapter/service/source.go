@@ -25,18 +25,19 @@ type Packet struct {
 }
 
 type Source struct {
-	adapter      *Adapter
-	info         *SourceInfo
-	store        *broton.Store
-	database     *Database
-	connector    *gravity_adapter.AdapterConnector
-	incoming     chan *CDCEvent
-	name         string
-	parser       *parallel_chunked_flow.ParallelChunkedFlow
-	tables       map[string]SourceTable
-	stopping     bool
-	ReplaceToken map[string]string
-	ackFutures   []nats.PubAckFuture
+	adapter          *Adapter
+	info             *SourceInfo
+	store            *broton.Store
+	database         *Database
+	connector        *gravity_adapter.AdapterConnector
+	name             string
+	parser           *parallel_chunked_flow.ParallelChunkedFlow
+	tables           map[string]SourceTable
+	stopping         bool
+	ReplaceToken     map[string]string
+	ackFutures       []nats.PubAckFuture
+	publishBatchSize uint64
+	//incoming     chan *CDCEvent
 }
 
 type Request struct {
@@ -52,6 +53,18 @@ var requestPool = sync.Pool{
 	},
 }
 
+var dataPool = sync.Pool{
+	New: func() interface{} {
+		return make(map[string]interface{})
+	},
+}
+
+var packetPool = sync.Pool{
+	New: func() interface{} {
+		return &Packet{}
+	},
+}
+
 func StrToBytes(s string) []byte {
 	x := (*[2]uintptr)(unsafe.Pointer(&s))
 	h := [3]uintptr{x[0], x[1], x[1]}
@@ -60,6 +73,7 @@ func StrToBytes(s string) []byte {
 
 func NewSource(adapter *Adapter, name string, sourceInfo *SourceInfo) *Source {
 
+	viper.SetDefault("gravity.publishBatchSize", 1000)
 	// required channel
 	if len(sourceInfo.Uri) == 0 {
 		log.WithFields(log.Fields{
@@ -83,34 +97,31 @@ func NewSource(adapter *Adapter, name string, sourceInfo *SourceInfo) *Source {
 		tables[tableName] = config
 	}
 
+	publishBatchSize := viper.GetUint64("gravity.publishBatchSize")
 	source := &Source{
-		adapter:      adapter,
-		info:         sourceInfo,
-		store:        nil,
-		database:     NewDatabase(),
-		incoming:     make(chan *CDCEvent, 204800),
-		name:         name,
-		tables:       tables,
-		ReplaceToken: make(map[string]string, 0),
-		ackFutures:   make([]nats.PubAckFuture, 0),
+		adapter:          adapter,
+		info:             sourceInfo,
+		store:            nil,
+		database:         NewDatabase(),
+		name:             name,
+		tables:           tables,
+		ReplaceToken:     make(map[string]string, 0),
+		ackFutures:       make([]nats.PubAckFuture, 0, publishBatchSize),
+		publishBatchSize: publishBatchSize,
+		//incoming:     make(chan *CDCEvent, 204800),
 	}
 
 	// Initialize parapllel chunked flow
 	pcfOpts := parallel_chunked_flow.Options{
-		BufferSize: 204800,
-		ChunkSize:  512,
-		ChunkCount: 512,
+		BufferSize: 2048,
+		ChunkSize:  128,
+		ChunkCount: 16,
 		Handler: func(data interface{}, output func(interface{})) {
-			/*
-				id := atomic.AddUint64((*uint64)(&counter), 1)
-				if id%100 == 0 {
-					log.Info(id)
-				}
-			*/
 
+			defer cdcEventPool.Put(data.(*CDCEvent))
 			req := source.prepareRequest(data.(*CDCEvent))
 			if req == nil {
-				log.Error("req in nil")
+				log.Warn("req in nil, skip ...")
 				return
 			}
 
@@ -204,7 +215,7 @@ func (source *Source) Init() error {
 		return err
 	}
 
-	go source.eventReceiver()
+	//go source.eventReceiver()
 	go source.requestHandler()
 
 	// Getting tables
@@ -222,15 +233,15 @@ func (source *Source) Init() error {
 	go func(tables map[string]SourceTable, initialLoad bool) {
 		err = source.database.StartCDC(tables, source.info.InitialLoad, func(event *CDCEvent) {
 
-			eventName := source.parseEventName(event)
-
-			// filter
-			if eventName == "" {
-				log.Error("eventName is empty")
-				return
+			for {
+				err := source.parser.Push(event)
+				if err != nil {
+					log.Trace(err, ", retry ...")
+					time.Sleep(5 * time.Second)
+					continue
+				}
+				break
 			}
-
-			source.incoming <- event
 		})
 		if err != nil {
 			log.Fatal(err)
@@ -240,6 +251,7 @@ func (source *Source) Init() error {
 	return nil
 }
 
+/*
 func (source *Source) eventReceiver() {
 
 	log.WithFields(log.Fields{
@@ -262,6 +274,7 @@ func (source *Source) eventReceiver() {
 		}
 	}
 }
+*/
 
 func (source *Source) requestHandler() {
 
@@ -270,11 +283,13 @@ func (source *Source) requestHandler() {
 		case req := <-source.parser.Output():
 			// TODO: retry
 			if req == nil {
-				log.Error("req in nil")
+				log.Warn("req in nil, skip ...")
 				break
 			}
-			source.HandleRequest(req.(*Request))
-			requestPool.Put(req)
+			request := req.(*Request)
+			source.HandleRequest(request)
+			packetPool.Put(request.Req)
+			requestPool.Put(request)
 		}
 	}
 }
@@ -288,7 +303,8 @@ func (source *Source) prepareRequest(event *CDCEvent) *Request {
 	}
 
 	// Prepare payload
-	data := make(map[string]interface{}, len(event.Before)+len(event.After))
+	data := dataPool.Get().(map[string]interface{})
+	defer dataPool.Put(data)
 	for k, v := range event.Before {
 
 		data[k] = v.Data
@@ -300,7 +316,7 @@ func (source *Source) prepareRequest(event *CDCEvent) *Request {
 	}
 
 	if event.Operation == UpdateOperation && len(event.UpdateEventRemoveField) > 0 {
-		removeFields := []string{}
+		removeFields := make([]string, 0, len(event.UpdateEventRemoveField))
 		for k, _ := range event.UpdateEventRemoveField {
 			removeFields = append(removeFields, k)
 		}
@@ -313,16 +329,16 @@ func (source *Source) prepareRequest(event *CDCEvent) *Request {
 		return nil
 	}
 
+	packet := packetPool.Get().(*Packet)
+	packet.EventName = eventName
+	packet.Payload = payload
+
 	// Preparing request
 	request := requestPool.Get().(*Request)
 	request.ResumeToken = event.ResumeToken
 	request.Table = event.Table
 	request.ReplaceOp = event.ReplaceOp
-
-	request.Req = &Packet{
-		EventName: eventName,
-		Payload:   payload,
-	}
+	request.Req = packet
 
 	return request
 }
@@ -338,10 +354,11 @@ func (source *Source) HandleRequest(request *Request) {
 
 		// Using new SDK to re-implement this part
 		meta := make(map[string]string)
-		meta["Nats-Msg-Id"] = fmt.Sprintf("%s-%s-%s-%s", source.name, request.Table, request.Req.EventName, request.ResumeToken)
+		meta["Nats-Msg-Id"] = source.name + "-" + request.Table + "-" + request.Req.EventName + "-" + request.ResumeToken
+
 		future, err := source.connector.PublishAsync(request.Req.EventName, request.Req.Payload, meta)
 		if err != nil {
-			log.Error("Failed to get publish Request:", err)
+			log.Warn("Failed to get publish Request:", err, ", retry ....")
 			log.Debug("EventName: ", request.Req.EventName, " Payload: ", string(request.Req.Payload))
 			time.Sleep(time.Second)
 			continue
@@ -354,7 +371,7 @@ func (source *Source) HandleRequest(request *Request) {
 
 	for source.store != nil {
 
-		// replace operation = create and update
+		// replace operation = delete and insert
 		if request.ReplaceOp != "" {
 			if _, ok := source.ReplaceToken[request.ReplaceOp]; !ok {
 				source.ReplaceToken[request.ReplaceOp] = request.ReplaceOp
@@ -374,21 +391,19 @@ func (source *Source) HandleRequest(request *Request) {
 	}
 
 	id := atomic.AddUint64((*uint64)(&counter), 1)
-	if id%10000 == 0 {
-		//source.checkPublishAsyncComplete()
+	if id%source.publishBatchSize == 0 {
 		counter = 0
 
 		lastFuture := 0
 		isError := false
 	RETRY:
 		for i, future := range source.ackFutures {
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			//defer cancel()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			select {
 			case <-future.Ok():
 				//log.Infof("Message %d acknowledged: %+v", i, pubAck)
 			case <-ctx.Done():
-				log.Errorf("Failed to publish message, retry ...")
+				log.Warnf("Failed to publish message, retry ...")
 				lastFuture = i
 				isError = true
 				cancel()
@@ -398,14 +413,14 @@ func (source *Source) HandleRequest(request *Request) {
 		}
 
 		if isError {
-			//log.Debug("cleanup publisher and start retry..", len(source.ackFutures[lastFuture:]))
 			source.connector.GetJetStream().CleanupPublisher()
+			log.Trace("start retry ...  ", len(source.ackFutures[lastFuture:]))
 			for _, future := range source.ackFutures[lastFuture:] {
 				// send msg with Sync mode
 				for {
 					_, err := source.connector.GetJetStream().PublishMsg(future.Msg())
 					if err != nil {
-						log.Error(err, "retry it...")
+						log.Warn(err, ", retry ...")
 						time.Sleep(time.Second)
 						continue
 					}
@@ -413,10 +428,10 @@ func (source *Source) HandleRequest(request *Request) {
 				}
 
 			}
-			//log.Debug("retry done")
+			log.Trace("retry done")
 
 		}
-		source.ackFutures = make([]nats.PubAckFuture, 0)
+		source.ackFutures = source.ackFutures[:0]
 	}
 }
 

@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"errors"
+	"sync"
 
 	parser "git.brobridge.com/gravity/gravity-adapter-mongodb/pkg/adapter/service/parser"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -26,6 +27,12 @@ type CDCEvent struct {
 	UpdateEventRemoveField map[string]*parser.Value
 }
 
+var cdcEventPool = sync.Pool{
+	New: func() interface{} {
+		return &CDCEvent{}
+	},
+}
+
 func (database *Database) parseSnapshotEvent(table string, event map[string]interface{}) (*CDCEvent, error) {
 	afterValue := make(map[string]*parser.Value)
 	for key, value := range event {
@@ -34,14 +41,14 @@ func (database *Database) parseSnapshotEvent(table string, event map[string]inte
 		}
 	}
 
-	result := CDCEvent{
-		Operation: InsertOperation,
-		Table:     table,
-		After:     afterValue,
-	}
+	result := cdcEventPool.Get().(*CDCEvent)
+	result.Operation = InsertOperation
+	result.Table = table
+	result.After = afterValue
 
-	return &result, nil
+	return result, nil
 }
+
 func (database *Database) parseInsertSQL(event map[string]interface{}) (*CDCEvent, error) {
 
 	// Parsing event
@@ -64,15 +71,12 @@ func (database *Database) parseInsertSQL(event map[string]interface{}) (*CDCEven
 	table := ns["coll"].(string)
 
 	// Prepare CDC event
-	result := CDCEvent{
-		Operation: InsertOperation,
-		Table:     table,
-		After:     afterValue,
-		//Before:    p.BeforeData,
-	}
+	result := cdcEventPool.Get().(*CDCEvent)
+	result.Operation = InsertOperation
+	result.Table = table
+	result.After = afterValue
 
-	return &result, nil
-
+	return result, nil
 }
 
 func (database *Database) parseReplaceSQL(event map[string]interface{}) (*CDCEvent, error) {
@@ -110,13 +114,13 @@ func (database *Database) parseReplaceSQL(event map[string]interface{}) (*CDCEve
 	table := ns["coll"].(string)
 
 	// Prepare CDC event
-	result := CDCEvent{
-		Operation: ReplaceOperation,
-		Table:     table,
-		After:     afterValue,
-		Before:    beforeValue,
-	}
-	return &result, nil
+	result := cdcEventPool.Get().(*CDCEvent)
+	result.Operation = ReplaceOperation
+	result.Table = table
+	result.After = afterValue
+	result.Before = beforeValue
+
+	return result, nil
 }
 
 func (database *Database) parseUpdateSQL(event map[string]interface{}) (*CDCEvent, error) {
@@ -162,15 +166,16 @@ func (database *Database) parseUpdateSQL(event map[string]interface{}) (*CDCEven
 	table := ns["coll"].(string)
 
 	// Prepare CDC event
-	result := CDCEvent{
-		Operation:              UpdateOperation,
-		Table:                  table,
-		After:                  afterValue,
-		Before:                 beforeValue,
-		UpdateEventRemoveField: removeValue,
-	}
-	return &result, nil
+	result := cdcEventPool.Get().(*CDCEvent)
+	result.Operation = UpdateOperation
+	result.Table = table
+	result.After = afterValue
+	result.Before = beforeValue
+	result.UpdateEventRemoveField = removeValue
+
+	return result, nil
 }
+
 func (database *Database) parseDeleteSQL(event map[string]interface{}) (*CDCEvent, error) {
 	//TODO
 	// Parsing event
@@ -193,14 +198,12 @@ func (database *Database) parseDeleteSQL(event map[string]interface{}) (*CDCEven
 	table := ns["coll"].(string)
 
 	// Prepare CDC event
-	result := CDCEvent{
-		Operation: DeleteOperation,
-		Table:     table,
-		//After:     p.AfterData,
-		Before: beforeValue,
-	}
+	result := cdcEventPool.Get().(*CDCEvent)
+	result.Operation = DeleteOperation
+	result.Table = table
+	result.Before = beforeValue
 
-	return &result, nil
+	return result, nil
 }
 
 func (database *Database) processEvent(event map[string]interface{}) (*CDCEvent, error) {
