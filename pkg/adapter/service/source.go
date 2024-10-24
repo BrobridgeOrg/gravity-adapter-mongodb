@@ -237,7 +237,7 @@ func (source *Source) Init() error {
 				err := source.parser.Push(event)
 				if err != nil {
 					log.Trace(err, ", retry ...")
-					time.Sleep(1 * time.Second)
+					time.Sleep(10 * time.Millisecond)
 					continue
 				}
 				break
