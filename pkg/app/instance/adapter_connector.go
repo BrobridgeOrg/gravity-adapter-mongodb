@@ -61,6 +61,7 @@ func (a *AppInstance) initAdapterConnector() error {
 	// Initializing gravity adapter connector
 	opts := gravity_adapter.NewOptions()
 	opts.Domain = domain
+	opts.Compression = gravity_adapter.S2Compression
 
 	a.adapterConnector = gravity_adapter.NewAdapterConnectorWithClient(client, opts)
 	err = a.adapterConnector.Connect(address, options)
