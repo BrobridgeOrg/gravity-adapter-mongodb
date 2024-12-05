@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	_ "go.uber.org/automaxprocs"
+	//_ "go.uber.org/automaxprocs"
 	"os"
 	//	"os/signal"
 	//	"time"
