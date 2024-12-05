@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"golang.org/x/time/rate"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +38,7 @@ type Source struct {
 	ReplaceToken     map[string]string
 	ackFutures       []nats.PubAckFuture
 	publishBatchSize uint64
+	rateLimiter      *rate.Limiter
 	//incoming     chan *CDCEvent
 }
 
@@ -74,6 +76,10 @@ func StrToBytes(s string) []byte {
 func NewSource(adapter *Adapter, name string, sourceInfo *SourceInfo) *Source {
 
 	viper.SetDefault("gravity.publishBatchSize", 1000)
+	publishBatchSize := viper.GetUint64("gravity.publishBatchSize")
+	viper.SetDefault("gravity.rateLimit", 0)
+	rateLimit := viper.GetFloat64("gravity.rateLimit")
+
 	// required channel
 	if len(sourceInfo.Uri) == 0 {
 		log.WithFields(log.Fields{
@@ -97,7 +103,13 @@ func NewSource(adapter *Adapter, name string, sourceInfo *SourceInfo) *Source {
 		tables[tableName] = config
 	}
 
-	publishBatchSize := viper.GetUint64("gravity.publishBatchSize")
+	limit := rate.Inf
+	if rateLimit != 0 {
+		limit = rate.Limit(rateLimit)
+	}
+	limiter := rate.NewLimiter(limit, int(rateLimit))
+	log.Info("Rate Limit: ", limiter.Limit())
+
 	source := &Source{
 		adapter:          adapter,
 		info:             sourceInfo,
@@ -108,6 +120,7 @@ func NewSource(adapter *Adapter, name string, sourceInfo *SourceInfo) *Source {
 		ReplaceToken:     make(map[string]string, 0),
 		ackFutures:       make([]nats.PubAckFuture, 0, publishBatchSize),
 		publishBatchSize: publishBatchSize,
+		rateLimiter:      limiter,
 		//incoming:     make(chan *CDCEvent, 204800),
 	}
 
@@ -350,12 +363,13 @@ func (source *Source) HandleRequest(request *Request) {
 		return
 	}
 
+	meta := make(map[string]string)
+	meta["Nats-Msg-Id"] = source.name + "-" + request.Table + "-" + request.Req.EventName + "-" + request.ResumeToken
+
 	for {
 
 		// Using new SDK to re-implement this part
-		meta := make(map[string]string)
-		meta["Nats-Msg-Id"] = source.name + "-" + request.Table + "-" + request.Req.EventName + "-" + request.ResumeToken
-
+		source.rateLimiter.Wait(context.Background())
 		future, err := source.connector.PublishAsync(request.Req.EventName, request.Req.Payload, meta)
 		if err != nil {
 			log.Warn("Failed to get publish Request:", err, ", retry ....")

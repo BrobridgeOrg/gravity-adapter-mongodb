@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/BrobridgeOrg/broton v0.0.7
-	github.com/BrobridgeOrg/gravity-sdk/v2 v2.0.9
+	github.com/BrobridgeOrg/gravity-sdk/v2 v2.0.12
 	github.com/cfsghost/parallel-chunked-flow v0.0.7
 	github.com/json-iterator/go v1.1.12
 	github.com/nats-io/nats.go v1.37.0
@@ -12,6 +12,7 @@ require (
 	github.com/spf13/viper v1.7.1
 	go.mongodb.org/mongo-driver v1.16.1
 	go.uber.org/automaxprocs v1.6.0
+	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4
 )
 
 require (

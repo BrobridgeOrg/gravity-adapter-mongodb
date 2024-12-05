@@ -17,6 +17,7 @@ maxPingsOutstanding = 3
 maxReconnects = -1
 accessToken = ""
 publishBatchSize = 1000
+rateLimit=0
 
 [adapter]
 adapterID = "mongodb_adapter"
@@ -40,6 +41,7 @@ path = "./statestore"
 |gravity.maxReconnects | 設定 gravity 的 maxReconnects |
 |gravity.accessToken | 設定 gravity 的 accessToken (for auth) |
 |gravity.publishBatchSize | 設定 adapter 發送 Event 至 nats 時 累積多少筆資料進行發送狀態檢查 |
+|gravity.rateLimit | 設定 adapter 發送 Event 至 nats 時 每秒速率上限 預設為 0 表示不限制 |
 |source.config |設定 Adapter 的 來源設定檔位置 |
 |store.enabled |是否掛載 presistent volume (記錄狀態) |
 |store.path | 設定 presistent volume 掛載點 (記錄狀態) |
