@@ -98,7 +98,7 @@ jobs:
     - name: Parse Trivy report
       id: parse-trivy-report
       run: |
-        report=$(cat trivy-report.txt | grep -B 2 Total)
+        report=$(cat trivy-report.txt | grep -B 2 Total || cat trivy-report.txt | grep -Ev "Legend:|-': Not scanned|0': Clean |Report Summary")
         echo "trivy_report<<EOF" >> $GITHUB_OUTPUT
         echo "$report" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
